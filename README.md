@@ -16,7 +16,6 @@ Built with **Python, PySide6, OpenCV, ArcFace (ONNX), SQLite, and real-time infe
 
 </div>
 
----
 
 # 📌 Overview
 
@@ -26,7 +25,6 @@ This project introduces an **AI-powered attendance system** that automatically i
 
 The system combines **computer vision**, **deep learning embeddings**, and **desktop application engineering** into one practical solution.
 
----
 
 # ✨ Features
 
@@ -51,13 +49,9 @@ Store attendance history and face data using SQLite.
 ## ⚡ Fast ONNX Inference
 Optimized recognition pipeline for efficient execution.
 
----
 
 # 🖼️ Application Screenshots
 
-> Place your images inside the `screenshots/` folder.
-
----
 
 ## Login Interface
 
@@ -65,7 +59,6 @@ Optimized recognition pipeline for efficient execution.
 
 Secure access for administrators.
 
----
 
 ## Student Enrollment
 
@@ -73,7 +66,6 @@ Secure access for administrators.
 
 Capture and register facial identities.
 
----
 
 ## Attendance Recognition
 
@@ -81,7 +73,6 @@ Capture and register facial identities.
 
 Live attendance marking through facial recognition.
 
----
 
 ## Attendance History
 
@@ -89,7 +80,6 @@ Live attendance marking through facial recognition.
 
 Review and export recorded attendance.
 
----
 
 # 🧠 AI Architecture
 
@@ -177,7 +167,7 @@ FaceRecognitionAttendance/
 ## Clone Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/danieludokike/FaceRecognitionAttendanceSystem.git
 ```
 
 Move into directory:
@@ -218,7 +208,7 @@ Run:
 python -m app.main
 ```
 
----
+
 
 # 🗄️ Database
 
@@ -232,7 +222,7 @@ Tables include:
 | embeddings | Face vectors |
 | attendance | Attendance records |
 
----
+
 
 # 📈 Performance Goals
 
@@ -241,7 +231,7 @@ Tables include:
 - Lightweight storage
 - Minimal administrative workload
 
----
+
 
 # 🎯 Research Relevance
 
@@ -262,7 +252,6 @@ This makes it suitable for:
 ✅ Computer Vision Research  
 ✅ Scholarship Applications  
 
----
 
 # 🚀 Future Improvements
 
@@ -275,7 +264,6 @@ This makes it suitable for:
 - Docker deployment
 - Web dashboard
 
----
 
 # 🤝 Contributing
 
@@ -287,10 +275,9 @@ Contributions are welcome.
 4. Push branch
 5. Open Pull Request
 
----
 
 # 👨‍💻 Author
-
+Ikegbunam Udokike Daniel;
 Developed as part of continuous learning in:
 
 - Artificial Intelligence
@@ -298,7 +285,3 @@ Developed as part of continuous learning in:
 - Software Engineering
 
 If this project helped you, consider giving it a ⭐
-
----
-
-> Building intelligent systems one project at a time.
