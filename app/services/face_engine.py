@@ -1,16 +1,16 @@
+# app/services/face_engine.py
 import os
 import sys
 import threading
-import math
 import cv2
 import numpy as np
+import shutil
 import requests
 
 # ---------- Model files (OpenCV Zoo) ----------
-YUNET_FILE  = "face_detection_yunet_2023mar.onnx"
-SFACE_FILE  = "face_recognition_sface_2021dec.onnx"
+YUNET_FILE = "face_detection_yunet_2023mar.onnx"
+SFACE_FILE = "face_recognition_sface_2021dec.onnx"
 
-# A couple of public mirrors (either works). If blocked, place files manually.
 YUNET_URLS = [
     "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
     "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
@@ -20,27 +20,69 @@ SFACE_URLS = [
     "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx",
 ]
 
-# ---------- Paths that also work inside PyInstaller bundles ----------
-def _resource_base():
-    # When packaged, _MEIPASS points to the temp bundle dir
-    return getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ---------- Paths / Env helpers ----------
+def _is_frozen():
+    return getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
-def _model_path(name: str) -> str:
-    # Keep models in app/models/
-    base = _resource_base()
-    path = os.path.join(base, "app", "models", name)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def _resource_base():
+    """
+    Read-only base for packaged resources:
+      - Frozen: sys._MEIPASS (PyInstaller temp)
+      - Dev:    app/ (this file is in app/services → go up one level)
+    """
+    if _is_frozen():
+        return sys._MEIPASS
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # .../app
+
+def _user_cache_dir():
+    """
+    User-writable cache for downloads/copies.
+    """
+    appname = "FaceRecognitionAttendance"
+    if sys.platform.startswith("win"):
+        root = os.getenv("LOCALAPPDATA") or os.path.expanduser(r"~\AppData\Local")
+        path = os.path.join(root, appname, "cache")
+    elif sys.platform == "darwin":
+        path = os.path.expanduser(f"~/Library/Caches/{appname}")
+    else:
+        path = os.path.expanduser(f"~/.cache/{appname}")
+    os.makedirs(path, exist_ok=True)
     return path
 
-YUNET_PATH = _model_path(YUNET_FILE)
-SFACE_PATH = _model_path(SFACE_FILE)
+# Paths for packaged models (read-only) and local dev models
+# NOTE: in your repo the models live at app/app/models
+_PACKAGED_MODELS_DIR = os.path.join(_resource_base(), "app", "app", "models")
+_DEV_MODELS_DIR      = _PACKAGED_MODELS_DIR if _is_frozen() else _PACKAGED_MODELS_DIR
+_CACHE_MODELS_DIR    = os.path.join(_user_cache_dir(), "models")
 
-# ---------- Globals ----------
+# Globals that hold the actual model paths used at runtime
+_YUNET_PATH = None
+_SFACE_PATH = None
+
+# ---------- Concurrency ----------
 _lock = threading.Lock()
 _detector = None
 _recognizer = None
 
+# ---------- IO helpers ----------
+def _exists_file(path: str) -> bool:
+    try:
+        return os.path.isfile(path)
+    except Exception:
+        return False
+
+def _safe_copy(src: str, dst: str):
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    tmp = dst + ".part"
+    shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
+
 def _download(urls, dest) -> bool:
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+    except Exception:
+        # If we can't create the parent, it's likely Program Files → bail
+        return False
     for url in urls:
         try:
             r = requests.get(url, timeout=60, stream=True)
@@ -56,33 +98,76 @@ def _download(urls, dest) -> bool:
             continue
     return False
 
-def _ensure_models():
-    ok = True
-    if not os.path.exists(YUNET_PATH):
-        ok = _download(YUNET_URLS, YUNET_PATH) and ok
-    if not os.path.exists(SFACE_PATH):
-        ok = _download(SFACE_URLS, SFACE_PATH) and ok
-    if not ok:
+# ---------- Model resolution ----------
+def _resolve_model_paths():
+    """
+    Decide where to load models from (no writes into Program Files):
+      1) Use PACKAGED models if present (read-only).
+      2) Else, if running frozen → download to user cache.
+      3) Else (dev) → try repo path; if missing, download to dev path (writable).
+    Sets _YUNET_PATH and _SFACE_PATH accordingly.
+    """
+    global _YUNET_PATH, _SFACE_PATH
+
+    packaged_yunet = os.path.join(_PACKAGED_MODELS_DIR, YUNET_FILE)
+    packaged_sface = os.path.join(_PACKAGED_MODELS_DIR, SFACE_FILE)
+
+    # Case 1: packaged (bundled via PyInstaller datas)
+    if _exists_file(packaged_yunet) and _exists_file(packaged_sface):
+        _YUNET_PATH, _SFACE_PATH = packaged_yunet, packaged_sface
+        return
+
+    # Case 2: frozen but not packaged → download to user cache (writable)
+    if _is_frozen():
+        cache_yunet = os.path.join(_CACHE_MODELS_DIR, YUNET_FILE)
+        cache_sface = os.path.join(_CACHE_MODELS_DIR, SFACE_FILE)
+        ok1 = _exists_file(cache_yunet) or _download(YUNET_URLS, cache_yunet)
+        ok2 = _exists_file(cache_sface) or _download(SFACE_URLS, cache_sface)
+        if not (ok1 and ok2):
+            raise RuntimeError(
+                "Could not obtain YuNet/SFace models.\n"
+                f"Tried user cache:\n  {cache_yunet}\n  {cache_sface}\n"
+                "Check your internet connection or pre-bundle models in the installer."
+            )
+        _YUNET_PATH, _SFACE_PATH = cache_yunet, cache_sface
+        return
+
+    # Case 3: dev (not frozen)
+    dev_yunet = os.path.join(_DEV_MODELS_DIR, YUNET_FILE)
+    dev_sface = os.path.join(_DEV_MODELS_DIR, SFACE_FILE)
+
+    # If present in repo, use them
+    if _exists_file(dev_yunet) and _exists_file(dev_sface):
+        _YUNET_PATH, _SFACE_PATH = dev_yunet, dev_sface
+        return
+
+    # Else download to repo path (dev is usually writable)
+    ok1 = _exists_file(dev_yunet) or _download(YUNET_URLS, dev_yunet)
+    ok2 = _exists_file(dev_sface) or _download(SFACE_URLS, dev_sface)
+    if not (ok1 and ok2):
         raise RuntimeError(
-            "Could not obtain YuNet/SFace models.\n"
-            f"Place them manually:\n  {YUNET_PATH}\n  {SFACE_PATH}\n"
+            "Could not obtain YuNet/SFace models in dev.\n"
+            f"Tried repo path:\n  {dev_yunet}\n  {dev_sface}\n"
+            "Check your internet connection or download the files manually."
         )
+    _YUNET_PATH, _SFACE_PATH = dev_yunet, dev_sface
 
 def _ensure_engine():
     global _detector, _recognizer
     with _lock:
         if _detector is None or _recognizer is None:
-            _ensure_models()
+            if _YUNET_PATH is None or _SFACE_PATH is None:
+                _resolve_model_paths()
             # YuNet detector; input size is set dynamically per frame
             _detector = cv2.FaceDetectorYN_create(
-                YUNET_PATH, "",
+                _YUNET_PATH, "",
                 (320, 320),
                 score_threshold=0.6,
                 nms_threshold=0.3,
                 top_k=5000
             )
             # SFace recognizer (aligns + extracts features)
-            _recognizer = cv2.FaceRecognizerSF_create(SFACE_PATH, "")
+            _recognizer = cv2.FaceRecognizerSF_create(_SFACE_PATH, "")
     return _detector, _recognizer
 
 # ---------- Helpers ----------
@@ -98,7 +183,7 @@ def _l2_normalize(v: np.ndarray, eps=1e-12):
     n = np.linalg.norm(v) + eps
     return (v / n).astype(np.float32)
 
-# ---------- Public API (compatible with your app) ----------
+# ---------- Public API ----------
 def get_face_embedding_bgr(frame_bgr: np.ndarray):
     """
     Return (embedding, bbox, (face_w, face_h)).
@@ -113,13 +198,12 @@ def get_face_embedding_bgr(frame_bgr: np.ndarray):
 
     face = _largest_face(faces)
     x, y, fw, fh = face[:4].astype(int)
-    bbox = (max(0, x), max(0, y), min(w, x+fw), min(h, y+fh))
+    bbox = (max(0, x), max(0, y), min(w, x + fw), min(h, y + fh))
 
     # reject tiny faces (keeps your UI behavior consistent)
     if fw < 110 or fh < 110:
         return None, bbox, (fw, fh)
 
-    # SFace handles alignment internally
     face_aligned = recognizer.alignCrop(frame_bgr, face)
     feat = recognizer.feature(face_aligned).flatten()
     emb = _l2_normalize(feat)
